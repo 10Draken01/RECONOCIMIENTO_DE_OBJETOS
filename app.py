@@ -282,7 +282,7 @@ class DetectorReciclaje:
         return img_final_rgb, stats, json_results
     
     def process_video(self, video_path, confidence=0.25, max_frames=100):
-        """Procesa video buscando objetos y kits de reciclaje."""
+        """Procesa video buscando objetos y kits de reciclaje - VERSION CORREGIDA."""
         if not video_path or not os.path.exists(video_path):
             return None, "❌ Video no encontrado", "{}"
         
@@ -293,38 +293,74 @@ class DetectorReciclaje:
         if not cap.isOpened():
             return None, "❌ No se puede abrir video", "{}"
         
-        # Propiedades
-        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 25
+        # Propiedades del video
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        if fps <= 0 or fps > 60:  # Validar FPS
+            fps = 25
+        
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        
+        # Validar dimensiones
+        if width <= 0 or height <= 0:
+            cap.release()
+            return None, "❌ Video con dimensiones inválidas", "{}"
         
         frames_to_process = min(total_frames, max_frames)
         
         print(f"📊 Video: {width}x{height}, {fps}fps, procesando {frames_to_process} frames")
         
-        # Video de salida
-        output_path = tempfile.mktemp(suffix='.mp4')
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # CORRECCION: Usar formato más compatible
+        output_filename = f"video_procesado_{int(time.time())}.mp4"
+        output_path = os.path.join(tempfile.gettempdir(), output_filename)
+        
+        # CODEC más compatible para Gradio
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')  # Cambio de mp4v a XVID
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        
+        # Verificar que el writer se inicializó correctamente
+        if not out.isOpened():
+            print("⚠️ Intentando con codec alternativo...")
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(output_path.replace('.mp4', '.avi'), fourcc, fps, (width, height))
+            output_path = output_path.replace('.mp4', '.avi')
+        
+        if not out.isOpened():
+            cap.release()
+            return None, "❌ No se puede crear video de salida", "{}"
         
         # Contadores
         total_pretrained = {}
         total_custom = {}
         frame_count = 0
-        potential_kits = 0  # Frames con botella Y tijeras
+        potential_kits = 0
         
         start_time = time.time()
         
         try:
+            print("🔄 Iniciando procesamiento frame por frame...")
+            
             while frame_count < frames_to_process:
                 ret, frame = cap.read()
                 if not ret:
+                    print(f"⚠️ No se pudo leer frame {frame_count + 1}")
                     break
                 
+                # VALIDAR FRAME
+                if frame is None or frame.size == 0:
+                    print(f"⚠️ Frame {frame_count + 1} está vacío")
+                    continue
+                
                 # Procesar frame
-                frame_with_pretrained, counts_pretrained = self.detect_pretrained(frame, confidence)
-                frame_final, counts_custom = self.detect_custom(frame_with_pretrained, confidence)
+                try:
+                    frame_with_pretrained, counts_pretrained = self.detect_pretrained(frame, confidence)
+                    frame_final, counts_custom = self.detect_custom(frame_with_pretrained, confidence)
+                except Exception as e:
+                    print(f"⚠️ Error procesando frame {frame_count + 1}: {e}")
+                    frame_final = frame  # Usar frame original si hay error
+                    counts_pretrained = {}
+                    counts_custom = {}
                 
                 # Análisis del contexto por frame
                 has_bottle = counts_pretrained.get('bottle', 0) > 0
@@ -340,52 +376,93 @@ class DetectorReciclaje:
                 for cls, count in counts_custom.items():
                     total_custom[cls] = total_custom.get(cls, 0) + count
                 
-                # Información del frame con contexto de reciclaje
+                # MEJORAR INFORMACIÓN DEL FRAME
                 current_detections = sum(counts_pretrained.values()) + sum(counts_custom.values())
                 
-                # Barra de información
-                info_y = height - 100
-                cv2.rectangle(frame_final, (0, info_y), (width, height), (0, 0, 0), -1)
+                # Barra de información MÁS VISIBLE
+                info_height = 120
+                info_y = height - info_height
                 
-                # Información básica
+                # Fondo semi-transparente más grande
+                overlay = frame_final.copy()
+                cv2.rectangle(overlay, (0, info_y), (width, height), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.7, frame_final, 0.3, 0, frame_final)
+                
+                # Información del frame
                 frame_text = f"Frame: {frame_count+1}/{frames_to_process}"
                 detect_text = f"Detecciones: {current_detections}"
+                progress_text = f"Progreso: {((frame_count+1)/frames_to_process)*100:.1f}%"
                 
                 # Contexto de reciclaje
                 if has_kit:
-                    context_text = "♻️ KIT DE RECICLAJE!"
+                    context_text = "♻️ KIT DE RECICLAJE DETECTADO!"
+                    context_color = (255, 0, 0)  # Azul
                 elif has_bottle and has_scissors:
-                    context_text = "🔄 POTENCIAL KIT"
+                    context_text = "🔄 POTENCIAL KIT PRESENTE"
+                    context_color = (0, 255, 255)  # Amarillo
                 elif has_bottle:
-                    context_text = "🍼 BOTELLA PRESENTE" 
+                    context_text = "🍼 BOTELLA DETECTADA" 
+                    context_color = (0, 255, 0)  # Verde
                 elif has_scissors:
-                    context_text = "✂️ TIJERAS PRESENTES"
+                    context_text = "✂️ TIJERAS DETECTADAS"
+                    context_color = (0, 255, 0)  # Verde
                 else:
-                    context_text = "🔍 BUSCANDO OBJETOS"
+                    context_text = "🔍 BUSCANDO OBJETOS RECICLABLES"
+                    context_color = (128, 128, 128)  # Gris
                 
-                cv2.putText(frame_final, frame_text, (10, info_y + 25), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame_final, detect_text, (10, info_y + 50), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame_final, context_text, (10, info_y + 75), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                # Dibujar textos con mejor visibilidad
+                y_offset = info_y + 25
+                cv2.putText(frame_final, frame_text, (15, y_offset), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
                 
-                # Escribir frame
-                out.write(frame_final)
+                y_offset += 25
+                cv2.putText(frame_final, detect_text, (15, y_offset), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                
+                y_offset += 25
+                cv2.putText(frame_final, progress_text, (15, y_offset), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
+                
+                y_offset += 25
+                cv2.putText(frame_final, context_text, (15, y_offset), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, context_color, 2)
+                
+                # VALIDAR FRAME ANTES DE ESCRIBIR
+                if frame_final.shape == (height, width, 3):
+                    out.write(frame_final)
+                else:
+                    print(f"⚠️ Frame {frame_count + 1} con dimensiones incorrectas")
+                    # Redimensionar si es necesario
+                    frame_resized = cv2.resize(frame_final, (width, height))
+                    out.write(frame_resized)
+                
                 frame_count += 1
                 
-                # Progreso
-                if frame_count % 25 == 0:
+                # Progreso cada 10 frames
+                if frame_count % 10 == 0:
                     progress = (frame_count / frames_to_process) * 100
-                    print(f"📊 Progreso: {progress:.1f}%")
+                    print(f"📊 Procesando: {progress:.1f}% ({frame_count}/{frames_to_process})")
+        
+        except Exception as e:
+            print(f"❌ Error durante procesamiento: {e}")
         
         finally:
             cap.release()
             out.release()
+            print(f"🔚 Procesamiento completado: {frame_count} frames")
+        
+        # VERIFICAR QUE EL VIDEO SE CREÓ CORRECTAMENTE
+        if not os.path.exists(output_path):
+            return None, "❌ No se pudo crear el video de salida", "{}"
+        
+        # Verificar tamaño del archivo
+        file_size = os.path.getsize(output_path)
+        if file_size < 1000:  # Menos de 1KB indica problema
+            return None, "❌ Video de salida demasiado pequeño (posible error)", "{}"
         
         processing_time = time.time() - start_time
         
-        # Guardar resultados con análisis de reciclaje
+        # Guardar resultados
         self.results = {
             'pretrained': total_pretrained,
             'custom': total_custom,
@@ -400,7 +477,9 @@ class DetectorReciclaje:
         stats = self.generate_video_stats(frame_count, processing_time, potential_kits)
         json_results = json.dumps(self.results, indent=2)
         
-        print(f"✅ Video procesado: {output_path}")
+        print(f"✅ Video procesado exitosamente: {output_path}")
+        print(f"📊 Tamaño: {file_size/1024/1024:.1f} MB")
+        
         return output_path, stats, json_results
     
     def generate_stats(self):
@@ -592,74 +671,162 @@ def export_csv_gradio():
     return "❌ Sin datos para exportar"
 
 def create_demo_video():
-    """Crear video de demostración con tema de reciclaje."""
+    """Crear video de demostración compatible con Gradio - VERSION CORREGIDA."""
     try:
-        print("🎬 Creando video demo de reciclaje...")
+        print("🎬 Creando video demo compatible...")
         
         width, height = 640, 480
-        fps = 10
-        duration = 6  # 6 segundos
+        fps = 15  # FPS más bajo para mejor compatibilidad
+        duration = 8  # 8 segundos
         
         os.makedirs("demo_videos", exist_ok=True)
-        output_path = "demo_videos/demo_reciclaje_creativo.mp4"
         
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        # Nombre único para evitar conflictos
+        timestamp = int(time.time())
+        output_path = f"demo_videos/demo_reciclaje_{timestamp}.avi"  # Cambio a .avi
+        
+        # Codec más compatible
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
         out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
         
-        for frame_num in range(fps * duration):
-            # Fondo blanco
-            frame = np.ones((height, width, 3), dtype=np.uint8) * 255
+        # Verificar que el writer funciona
+        if not out.isOpened():
+            print("⚠️ Intentando codec alternativo...")
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            output_path = f"demo_videos/demo_reciclaje_{timestamp}.avi"
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        
+        if not out.isOpened():
+            return "❌ No se puede crear video demo"
+        
+        total_frames = fps * duration
+        print(f"📊 Generando {total_frames} frames...")
+        
+        for frame_num in range(total_frames):
+            # Crear frame base más colorido
+            frame = np.ones((height, width, 3), dtype=np.uint8) * 240  # Fondo gris claro
             
-            # Título
-            cv2.putText(frame, "DEMO: RECICLAJE CREATIVO", (150, 40), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+            # Título más visible
+            cv2.rectangle(frame, (0, 0), (width, 60), (50, 50, 50), -1)
+            cv2.putText(frame, "DEMO: RECICLAJE CREATIVO", (120, 35), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
             
-            # Simular botella (rectángulo azul claro que se mueve)
-            bottle_x = 80 + int(40 * np.sin(frame_num * 0.3))
-            bottle_y = 150
-            cv2.rectangle(frame, (bottle_x, bottle_y), (bottle_x + 50, bottle_y + 120), (255, 150, 100), -1)
-            cv2.putText(frame, "BOTELLA", (bottle_x-10, bottle_y-10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+            # Animación de tiempo
+            progress = frame_num / total_frames
             
-            # Simular tijeras (dos rectángulos que se mueven)
-            scissors_x = 400 + int(30 * np.cos(frame_num * 0.4))
-            scissors_y = 200
-            cv2.rectangle(frame, (scissors_x, scissors_y), (scissors_x + 80, scissors_y + 15), (100, 255, 100), -1)
-            cv2.rectangle(frame, (scissors_x, scissors_y + 25), (scissors_x + 80, scissors_y + 40), (100, 255, 100), -1)
-            cv2.putText(frame, "TIJERAS", (scissors_x, scissors_y-10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+            # Botella animada (rectángulo azul que se mueve)
+            bottle_x = 80 + int(60 * np.sin(frame_num * 0.2))
+            bottle_y = 120
+            bottle_w, bottle_h = 60, 140
             
-            # En la segunda mitad, simular kit de reciclaje
-            if frame_num > fps * 3:  # Después de 3 segundos
+            # Dibujar botella con mejor forma
+            cv2.rectangle(frame, (bottle_x, bottle_y), (bottle_x + bottle_w, bottle_y + bottle_h), 
+                         (255, 150, 100), -1)  # Azul claro
+            cv2.rectangle(frame, (bottle_x, bottle_y), (bottle_x + bottle_w, bottle_y + bottle_h), 
+                         (200, 100, 50), 3)   # Borde
+            
+            # Etiqueta de botella
+            cv2.rectangle(frame, (bottle_x - 5, bottle_y - 35), (bottle_x + 70, bottle_y - 5), 
+                         (0, 255, 0), -1)
+            cv2.putText(frame, "BOTELLA", (bottle_x, bottle_y - 15), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # Tijeras animadas (dos rectángulos que se mueven)
+            scissors_x = 350 + int(40 * np.cos(frame_num * 0.25))
+            scissors_y = 150
+            scissors_w, scissors_h = 100, 20
+            
+            # Dibujar tijeras (dos hojas)
+            cv2.rectangle(frame, (scissors_x, scissors_y), 
+                         (scissors_x + scissors_w, scissors_y + scissors_h), 
+                         (100, 255, 100), -1)  # Verde claro
+            cv2.rectangle(frame, (scissors_x, scissors_y + 30), 
+                         (scissors_x + scissors_w, scissors_y + scissors_h + 30), 
+                         (100, 255, 100), -1)  # Segunda hoja
+            
+            # Bordes de tijeras
+            cv2.rectangle(frame, (scissors_x, scissors_y), 
+                         (scissors_x + scissors_w, scissors_y + scissors_h), 
+                         (50, 200, 50), 3)
+            cv2.rectangle(frame, (scissors_x, scissors_y + 30), 
+                         (scissors_x + scissors_w, scissors_y + scissors_h + 30), 
+                         (50, 200, 50), 3)
+            
+            # Etiqueta de tijeras
+            cv2.rectangle(frame, (scissors_x - 5, scissors_y - 35), (scissors_x + 85, scissors_y - 5), 
+                         (0, 255, 0), -1)
+            cv2.putText(frame, "TIJERAS", (scissors_x, scissors_y - 15), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # En la segunda mitad, mostrar kit de reciclaje
+            if progress > 0.4:  # Después del 40%
                 kit_x = 200
-                kit_y = 320
+                kit_y = 300
                 
-                # Marco del kit (rectángulo punteado)
-                cv2.rectangle(frame, (kit_x-20, kit_y-20), (kit_x+160, kit_y+80), (255, 0, 255), 3)
+                # Marco del kit (rectángulo de color distintivo)
+                cv2.rectangle(frame, (kit_x - 30, kit_y - 30), (kit_x + 200, kit_y + 100), 
+                             (255, 0, 255), 4)  # Marco magenta
+                
+                # Fondo del kit
+                cv2.rectangle(frame, (kit_x - 25, kit_y - 25), (kit_x + 195, kit_y + 95), 
+                             (255, 255, 255), -1)  # Fondo blanco
                 
                 # Botella pequeña en el kit
-                cv2.rectangle(frame, (kit_x, kit_y), (kit_x + 30, kit_y + 60), (255, 150, 100), -1)
+                cv2.rectangle(frame, (kit_x, kit_y), (kit_x + 40, kit_y + 70), 
+                             (255, 150, 100), -1)
+                cv2.rectangle(frame, (kit_x, kit_y), (kit_x + 40, kit_y + 70), 
+                             (200, 100, 50), 2)
                 
                 # Tijeras pequeñas en el kit
-                cv2.rectangle(frame, (kit_x + 50, kit_y + 20), (kit_x + 110, kit_y + 30), (100, 255, 100), -1)
-                cv2.rectangle(frame, (kit_x + 50, kit_y + 35), (kit_x + 110, kit_y + 45), (100, 255, 100), -1)
+                cv2.rectangle(frame, (kit_x + 60, kit_y + 20), (kit_x + 130, kit_y + 35), 
+                             (100, 255, 100), -1)
+                cv2.rectangle(frame, (kit_x + 60, kit_y + 40), (kit_x + 130, kit_y + 55), 
+                             (100, 255, 100), -1)
                 
                 # Etiqueta del kit
-                cv2.putText(frame, "KIT RECICLAJE", (kit_x-10, kit_y-25), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
+                cv2.rectangle(frame, (kit_x - 25, kit_y - 55), (kit_x + 140, kit_y - 30), 
+                             (255, 0, 0), -1)  # Fondo azul
+                cv2.putText(frame, "KIT RECICLAJE", (kit_x - 15, kit_y - 35), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
-            # Info del frame
-            cv2.putText(frame, f"Frame {frame_num + 1}/{fps * duration}", (10, height-20), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (128, 128, 128), 1)
+            # Información del frame (más visible)
+            info_y = height - 40
+            cv2.rectangle(frame, (0, info_y), (width, height), (0, 0, 0), -1)
             
-            out.write(frame)
+            frame_info = f"Frame {frame_num + 1}/{total_frames} | Progreso: {progress*100:.0f}%"
+            cv2.putText(frame, frame_info, (10, info_y + 25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # Escribir frame con validación
+            if frame.shape == (height, width, 3):
+                out.write(frame)
+            else:
+                print(f"⚠️ Frame {frame_num} con dimensiones incorrectas")
+                frame_resized = cv2.resize(frame, (width, height))
+                out.write(frame_resized)
+            
+            # Progreso cada 25 frames
+            if (frame_num + 1) % 25 == 0:
+                print(f"📊 Generando: {((frame_num + 1)/total_frames)*100:.0f}%")
         
         out.release()
-        print(f"✅ Video demo creado: {output_path}")
-        return f"✅ Video creado: {output_path}"
+        
+        # Verificar que el archivo se creó correctamente
+        if os.path.exists(output_path):
+            file_size = os.path.getsize(output_path)
+            print(f"✅ Video demo creado: {output_path}")
+            print(f"📊 Tamaño: {file_size/1024/1024:.1f} MB")
+            
+            if file_size > 10000:  # Al menos 10KB
+                return f"✅ Video demo creado exitosamente: {output_path}\n📊 Tamaño: {file_size/1024/1024:.1f} MB\n🎬 Listo para subir a la aplicación"
+            else:
+                return f"⚠️ Video creado pero muy pequeño. Revisa el codec."
+        else:
+            return "❌ No se pudo crear el archivo de video"
         
     except Exception as e:
-        return f"❌ Error: {str(e)}"
+        print(f"❌ Error creando video demo: {e}")
+        return f"❌ Error creando video demo: {str(e)}. Intenta instalaciones: pip install opencv-python"
 
 def create_interface():
     """Crear interfaz Gradio con tema de reciclaje."""
