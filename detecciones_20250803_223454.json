@@ -1,0 +1,101 @@
+{
+  "contadores": {
+    "persona": 9,
+    "automovil": 0,
+    "señal_alto": 0
+  },
+  "total_detecciones": 9,
+  "detecciones": [
+    {
+      "clase": "persona",
+      "confianza": 0.9093486666679382,
+      "bbox": [
+        16,
+        73,
+        102,
+        314
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.8563809990882874,
+      "bbox": [
+        92,
+        2,
+        220,
+        372
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.7909643650054932,
+      "bbox": [
+        207,
+        46,
+        295,
+        345
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.7658143043518066,
+      "bbox": [
+        404,
+        82,
+        483,
+        301
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.7563555836677551,
+      "bbox": [
+        476,
+        88,
+        543,
+        293
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.719650387763977,
+      "bbox": [
+        560,
+        34,
+        611,
+        314
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.7180191874504089,
+      "bbox": [
+        301,
+        57,
+        406,
+        385
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.6797846555709839,
+      "bbox": [
+        254,
+        51,
+        302,
+        312
+      ]
+    },
+    {
+      "clase": "persona",
+      "confianza": 0.6370614767074585,
+      "bbox": [
+        525,
+        102,
+        568,
+        301
+      ]
+    }
+  ],
+  "timestamp": "2025-08-03T22:34:54.414803"
+}

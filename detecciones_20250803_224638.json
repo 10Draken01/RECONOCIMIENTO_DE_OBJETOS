@@ -1,0 +1,10 @@
+{
+  "contadores": {
+    "persona": 0,
+    "automovil": 0,
+    "señal_alto": 0
+  },
+  "total_detecciones": 0,
+  "detecciones": [],
+  "timestamp": "2025-08-03T22:46:38.305871"
+}

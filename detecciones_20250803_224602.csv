@@ -1,0 +1,10 @@
+RESUMEN DE CONTADORES
+persona,automovil,señal_alto
+2,2,0
+
+DETALLE DE DETECCIONES
+clase,confianza,bbox
+persona,0.8165798187255859,"[1512, 1419, 1694, 1880]"
+persona,0.6747235059738159,"[2013, 1486, 2164, 1809]"
+automovil,0.6052525639533997,"[2211, 1499, 2568, 1640]"
+automovil,0.5281804800033569,"[318, 1322, 1551, 1902]"
