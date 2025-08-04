@@ -1,319 +1,413 @@
+#!/usr/bin/env python3
 """
-Script para entrenar modelo personalizado de señales de alto mexicanas
-Descripción: Entrena un modelo YOLOv8 personalizado para detectar señales de alto 
+Script para entrenar un modelo YOLO personalizado
+Universidad Politécnica de Chiapas
+
+Este script:
+1. Prepara el dataset personalizado
+2. Configura el entrenamiento
+3. Entrena el modelo YOLO
+4. Genera métricas y visualizaciones
+5. Valida el modelo entrenado
+
+Para usar este script necesitas:
+- Imágenes anotadas en formato YOLO
+- Archivo data.yaml con configuración del dataset
 """
+
 import os
 import yaml
-from ultralytics import YOLO
-import torch
-from pathlib import Path
 import shutil
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+import pandas as pd
+from pathlib import Path
+import json
 from datetime import datetime
 
-class CustomModelTrainer:
+class CustomYOLOTrainer:
     """
-    Clase para entrenar el modelo personalizado de señales de alto
+    Clase para entrenar modelos YOLO personalizados.
+    
+    Maneja todo el proceso desde la preparación del dataset
+    hasta la validación del modelo entrenado.
     """
     
-    def __init__(self, dataset_path: str = "dataset"):
+    def __init__(self, project_name: str = "custom_detection"):
         """
-        Inicializa el entrenador
+        Inicializa el entrenador personalizado.
         
         Args:
-            dataset_path: Ruta al dataset organizado
+            project_name: Nombre del proyecto de entrenamiento
         """
-        self.dataset_path = Path(dataset_path)
-        self.models_dir = Path("models")
-        self.models_dir.mkdir(exist_ok=True)
+        self.project_name = project_name
+        self.dataset_path = "dataset"
+        self.models_path = "models"
+        self.results_path = "training_results"
+        
+        # Crear directorios necesarios
+        self.create_directories()
         
         # Configuración de entrenamiento
-        self.config = {
-            'epochs': 100,
-            'batch_size': 16,
-            'img_size': 640,
-            'device': 'cuda' if torch.cuda.is_available() else 'cpu',
-            'patience': 20,  # Early stopping
-            'save_period': 10,  # Guardar checkpoint cada 10 epochs
+        self.training_config = {
+            'epochs': 100,          # Número de epochs (ciclos de entrenamiento)
+            'imgsz': 640,          # Tamaño de imagen para entrenamiento
+            'batch': 16,           # Tamaño del batch (ajustar según tu GPU)
+            'lr0': 0.01,           # Learning rate inicial
+            'patience': 50,        # Paciencia para early stopping
+            'save_period': 10,     # Guardar modelo cada X epochs
         }
-        
-    def create_dataset_yaml(self) -> str:
-        """
-        Crea el archivo YAML de configuración del dataset
-        
-        Returns:
-            str: Ruta al archivo YAML creado
-        """
-        yaml_config = {
-            'path': str(self.dataset_path.absolute()),
-            'train': 'images/train',
-            'val': 'images/val',
-            'test': 'images/test',  # Opcional
-            'nc': 1,  # Número de clases
-            'names': ['señal_alto']  # Nombres de las clases
-        }
-        
-        yaml_path = self.dataset_path / "dataset.yaml"
-        
-        with open(yaml_path, 'w', encoding='utf-8') as f:
-            yaml.dump(yaml_config, f, default_flow_style=False, allow_unicode=True)
-        
-        print(f"📝 Archivo de configuración creado: {yaml_path}")
-        return str(yaml_path)
     
-    def validate_dataset_structure(self) -> bool:
+    def create_directories(self):
         """
-        Valida que el dataset tenga la estructura correcta
-        
-        Returns:
-            bool: True si la estructura es válida
+        Crea la estructura de directorios necesaria.
         """
-        required_dirs = [
-            self.dataset_path / "images" / "train",
-            self.dataset_path / "images" / "val",
-            self.dataset_path / "labels" / "train",
-            self.dataset_path / "labels" / "val"
+        directories = [
+            self.dataset_path,
+            f"{self.dataset_path}/images/train",
+            f"{self.dataset_path}/images/val",
+            f"{self.dataset_path}/labels/train",
+            f"{self.dataset_path}/labels/val",
+            self.models_path,
+            self.results_path
         ]
         
+        for directory in directories:
+            os.makedirs(directory, exist_ok=True)
+            print(f"📁 Directorio creado/verificado: {directory}")
+    
+    def create_dataset_yaml(self, class_names: list, class_descriptions: list = None):
+        """
+        Crea el archivo data.yaml necesario para YOLO.
+        
+        Args:
+            class_names: Lista con nombres de las clases a detectar
+            class_descriptions: Descripciones opcionales de las clases
+        """
+        if class_descriptions is None:
+            class_descriptions = [f"Descripción de {name}" for name in class_names]
+        
+        # Configuración del dataset
+        dataset_config = {
+            'path': os.path.abspath(self.dataset_path),
+            'train': 'images/train',
+            'val': 'images/val',
+            'nc': len(class_names),  # Número de clases
+            'names': class_names
+        }
+        
+        # Guardar archivo YAML
+        yaml_path = f"{self.dataset_path}/data.yaml"
+        with open(yaml_path, 'w', encoding='utf-8') as f:
+            yaml.dump(dataset_config, f, default_flow_style=False, allow_unicode=True)
+        
+        print(f"✅ Archivo data.yaml creado en: {yaml_path}")
+        print(f"📊 Configuración: {len(class_names)} clases")
+        for i, (name, desc) in enumerate(zip(class_names, class_descriptions)):
+            print(f"   Clase {i}: {name} - {desc}")
+        
+        return yaml_path
+    
+    def validate_dataset(self):
+        """
+        Valida que el dataset tenga la estructura correcta.
+        
+        Returns:
+            bool: True si el dataset es válido
+        """
         print("🔍 Validando estructura del dataset...")
         
-        for dir_path in required_dirs:
-            if not dir_path.exists():
-                print(f"❌ Directorio faltante: {dir_path}")
+        # Verificar que existan las carpetas necesarias
+        required_dirs = [
+            f"{self.dataset_path}/images/train",
+            f"{self.dataset_path}/images/val",
+            f"{self.dataset_path}/labels/train",
+            f"{self.dataset_path}/labels/val"
+        ]
+        
+        for directory in required_dirs:
+            if not os.path.exists(directory):
+                print(f"❌ Directorio faltante: {directory}")
                 return False
-            else:
-                file_count = len(list(dir_path.glob("*")))
-                print(f"✅ {dir_path}: {file_count} archivos")
         
-        # Validar que hay suficientes imágenes de entrenamiento
-        train_images = list((self.dataset_path / "images" / "train").glob("*"))
-        if len(train_images) < 50:
-            print(f"⚠️  Advertencia: Solo {len(train_images)} imágenes de entrenamiento. Se recomiendan al menos 50.")
+        # Contar imágenes y etiquetas
+        train_images = len([f for f in os.listdir(f"{self.dataset_path}/images/train") 
+                           if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+        val_images = len([f for f in os.listdir(f"{self.dataset_path}/images/val") 
+                         if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+        train_labels = len([f for f in os.listdir(f"{self.dataset_path}/labels/train") 
+                           if f.endswith('.txt')])
+        val_labels = len([f for f in os.listdir(f"{self.dataset_path}/labels/val") 
+                         if f.endswith('.txt')])
         
+        print(f"📊 Estadísticas del dataset:")
+        print(f"   Imágenes de entrenamiento: {train_images}")
+        print(f"   Etiquetas de entrenamiento: {train_labels}")
+        print(f"   Imágenes de validación: {val_images}")
+        print(f"   Etiquetas de validación: {val_labels}")
+        
+        # Verificar que haya suficientes datos
+        if train_images < 50:
+            print("⚠️ ADVERTENCIA: Pocas imágenes de entrenamiento (mínimo recomendado: 50)")
+        
+        if train_images != train_labels:
+            print("⚠️ ADVERTENCIA: Número de imágenes y etiquetas no coincide en entrenamiento")
+        
+        # Verificar archivo data.yaml
+        yaml_path = f"{self.dataset_path}/data.yaml"
+        if not os.path.exists(yaml_path):
+            print(f"❌ Archivo data.yaml faltante: {yaml_path}")
+            return False
+        
+        print("✅ Dataset validado correctamente")
         return True
     
-    def train_model(self, base_model: str = 'yolov8n.pt') -> str:
+    def train_model(self, base_model: str = "yolov8n.pt"):
         """
-        Entrena el modelo personalizado
+        Entrena el modelo YOLO personalizado.
         
         Args:
             base_model: Modelo base para transfer learning
-            
-        Returns:
-            str: Ruta al modelo entrenado
         """
-        print(f"🚀 Iniciando entrenamiento del modelo personalizado...")
-        print(f"📊 Configuración: {self.config}")
+        if not self.validate_dataset():
+            print("❌ Dataset inválido. Por favor corrige los errores antes de entrenar.")
+            return None
         
-        # Crear archivo YAML del dataset
-        yaml_path = self.create_dataset_yaml()
+        print(f"🚀 Iniciando entrenamiento con modelo base: {base_model}")
         
         # Cargar modelo base
         model = YOLO(base_model)
         
-        # Configurar entrenamiento
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        project_name = f"senales_alto_{timestamp}"
+        # Configurar paths
+        data_yaml = f"{self.dataset_path}/data.yaml"
+        project_path = self.results_path
         
-        # Entrenar modelo
-        results = model.train(
-            data=yaml_path,
-            epochs=self.config['epochs'],
-            batch=self.config['batch_size'],
-            imgsz=self.config['img_size'],
-            device=self.config['device'],
-            project=str(self.models_dir),
-            name=project_name,
-            patience=self.config['patience'],
-            save_period=self.config['save_period'],
-            verbose=True,
-            val=True,
-            plots=True,  # Generar gráficas de entrenamiento
-            save_json=True,  # Guardar métricas en JSON
-        )
-        
-        # Ruta del mejor modelo
-        best_model_path = self.models_dir / project_name / "weights" / "best.pt"
-        
-        # Copiar el mejor modelo a la ubicación esperada por la aplicación
-        final_model_path = self.models_dir / "senales_alto.pt"
-        if best_model_path.exists():
-            shutil.copy2(best_model_path, final_model_path)
-            print(f"✅ Modelo final guardado en: {final_model_path}")
-        
-        # Mostrar métricas finales
-        self.show_training_summary(results, project_name)
-        
-        return str(final_model_path)
-    
-    def show_training_summary(self, results, project_name: str):
-        """Muestra un resumen del entrenamiento"""
-        print("\n" + "="*60)
-        print("🎯 RESUMEN DEL ENTRENAMIENTO")
-        print("="*60)
+        print("📋 Configuración de entrenamiento:")
+        for key, value in self.training_config.items():
+            print(f"   {key}: {value}")
         
         try:
-            # Obtener métricas del último epoch
-            metrics = results.results_dict
+            # Iniciar entrenamiento
+            results = model.train(
+                data=data_yaml,
+                epochs=self.training_config['epochs'],
+                imgsz=self.training_config['imgsz'],
+                batch=self.training_config['batch'],
+                lr0=self.training_config['lr0'],
+                patience=self.training_config['patience'],
+                save_period=self.training_config['save_period'],
+                project=project_path,
+                name=self.project_name,
+                exist_ok=True,
+                verbose=True
+            )
             
-            print(f"📈 Métricas finales:")
-            print(f"   • Precisión (P): {metrics.get('metrics/precision(B)', 0):.3f}")
-            print(f"   • Recall (R): {metrics.get('metrics/recall(B)', 0):.3f}")
-            print(f"   • mAP@0.5: {metrics.get('metrics/mAP50(B)', 0):.3f}")
-            print(f"   • mAP@0.5:0.95: {metrics.get('metrics/mAP50-95(B)', 0):.3f}")
+            print("✅ Entrenamiento completado exitosamente")
             
-            print(f"\n📁 Archivos generados en: {self.models_dir / project_name}")
-            print("   • best.pt - Mejor modelo")
-            print("   • last.pt - Último modelo")
-            print("   • results.csv - Métricas por epoch")
-            print("   • confusion_matrix.png - Matriz de confusión")
-            print("   • results.png - Gráficas de entrenamiento")
+            # Copiar mejor modelo a carpeta models
+            best_model_path = f"{project_path}/{self.project_name}/weights/best.pt"
+            final_model_path = f"{self.models_path}/custom_model.pt"
+            
+            if os.path.exists(best_model_path):
+                shutil.copy2(best_model_path, final_model_path)
+                print(f"✅ Mejor modelo guardado en: {final_model_path}")
+            
+            return results
             
         except Exception as e:
-            print(f"No se pudieron mostrar las métricas: {e}")
-        
-        print("="*60)
+            print(f"❌ Error durante el entrenamiento: {str(e)}")
+            return None
     
-    def test_model(self, model_path: str, test_images_dir: str = None):
+    def validate_trained_model(self):
         """
-        Prueba el modelo entrenado con imágenes de prueba
-        
-        Args:
-            model_path: Ruta al modelo entrenado
-            test_images_dir: Directorio con imágenes de prueba
+        Valida el modelo entrenado y genera métricas.
         """
-        if not test_images_dir:
-            test_images_dir = self.dataset_path / "images" / "test"
+        model_path = f"{self.models_path}/custom_model.pt"
         
-        if not Path(test_images_dir).exists():
-            print(f"⚠️  No se encontró directorio de pruebas: {test_images_dir}")
+        if not os.path.exists(model_path):
+            print(f"❌ Modelo no encontrado: {model_path}")
             return
         
-        print(f"🧪 Probando modelo con imágenes en: {test_images_dir}")
+        print("🔍 Validando modelo entrenado...")
         
-        # Cargar modelo
+        # Cargar modelo entrenado
         model = YOLO(model_path)
         
-        # Obtener imágenes de prueba
-        test_images = list(Path(test_images_dir).glob("*.jpg")) + \
-                     list(Path(test_images_dir).glob("*.png"))
+        # Ejecutar validación
+        data_yaml = f"{self.dataset_path}/data.yaml"
+        validation_results = model.val(data=data_yaml)
         
-        if not test_images:
-            print("❌ No se encontraron imágenes de prueba")
-            return
+        # Generar reporte de métricas
+        self.generate_metrics_report(validation_results)
         
-        print(f"📸 Procesando {len(test_images)} imágenes de prueba...")
+        print("✅ Validación completada")
+    
+    def generate_metrics_report(self, validation_results):
+        """
+        Genera un reporte detallado de las métricas del modelo.
         
-        # Procesar cada imagen
-        for img_path in test_images[:5]:  # Procesar solo las primeras 5
-            results = model(str(img_path))
+        Args:
+            validation_results: Resultados de la validación de YOLO
+        """
+        print("📊 Generando reporte de métricas...")
+        
+        # Crear reporte en texto
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = f"{self.results_path}/metrics_report_{timestamp}.txt"
+        
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("REPORTE DE MÉTRICAS - MODELO YOLO PERSONALIZADO\n")
+            f.write("="*60 + "\n\n")
+            f.write(f"Fecha de generación: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Proyecto: {self.project_name}\n\n")
             
-            # Mostrar resultados
-            for result in results:
-                boxes = result.boxes
-                if boxes is not None and len(boxes) > 0:
-                    print(f"✅ {img_path.name}: {len(boxes)} señales detectadas")
-                    for box in boxes:
-                        conf = box.conf[0].cpu().numpy()
-                        print(f"   • Confianza: {conf:.3f}")
-                else:
-                    print(f"❌ {img_path.name}: No se detectaron señales")
+            # Métricas principales
+            if hasattr(validation_results, 'box'):
+                f.write("MÉTRICAS DE DETECCIÓN:\n")
+                f.write(f"mAP50: {validation_results.box.map50:.4f}\n")
+                f.write(f"mAP50-95: {validation_results.box.map:.4f}\n")
+                f.write(f"Precisión: {validation_results.box.mp:.4f}\n")
+                f.write(f"Recall: {validation_results.box.mr:.4f}\n\n")
+            
+            f.write("CONFIGURACIÓN DE ENTRENAMIENTO:\n")
+            for key, value in self.training_config.items():
+                f.write(f"{key}: {value}\n")
+        
+        print(f"✅ Reporte guardado en: {report_path}")
+    
+    def create_training_guide(self):
+        """
+        Crea una guía paso a paso para preparar el dataset.
+        """
+        guide_path = f"{self.results_path}/guia_dataset.md"
+        
+        guide_content = """
+# 📋 Guía para Preparar Dataset Personalizado
 
-def create_dataset_structure(base_path: str = "dataset"):
-    """
-    Crea la estructura básica del dataset
-    
-    Args:
-        base_path: Ruta base donde crear el dataset
-    """
-    dataset_path = Path(base_path)
-    
-    # Crear directorios
-    dirs_to_create = [
-        dataset_path / "images" / "train",
-        dataset_path / "images" / "val",
-        dataset_path / "images" / "test",
-        dataset_path / "labels" / "train",
-        dataset_path / "labels" / "val",
-        dataset_path / "labels" / "test"
-    ]
-    
-    for dir_path in dirs_to_create:
-        dir_path.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Creado: {dir_path}")
-    
-    # Crear archivo README con instrucciones
-    readme_content = """
-# Dataset de Señales de Alto Mexicanas
+## 🎯 Objetivo
+Crear un dataset para entrenar YOLO a detectar objetos específicos (ej: logos, productos, herramientas).
 
-## Estructura del Dataset:
+## 📁 Estructura de Carpetas Requerida
 ```
 dataset/
+├── data.yaml           # Configuración del dataset
 ├── images/
-│   ├── train/          # Imágenes de entrenamiento (70%)
-│   ├── val/            # Imágenes de validación (20%)
-│   └── test/           # Imágenes de prueba (10%)
+│   ├── train/         # Imágenes de entrenamiento (80%)
+│   └── val/           # Imágenes de validación (20%)
 └── labels/
-    ├── train/          # Etiquetas de entrenamiento (.txt)
-    ├── val/            # Etiquetas de validación (.txt)
-    └── test/           # Etiquetas de prueba (.txt)
+    ├── train/         # Etiquetas de entrenamiento (.txt)
+    └── val/           # Etiquetas de validación (.txt)
 ```
 
-## Formato de Etiquetas (YOLO):
-Cada archivo .txt debe contener una línea por objeto:
-```
-class_id center_x center_y width height
-```
+## 📷 Paso 1: Recolectar Imágenes
+1. **Cantidad mínima**: 50 imágenes por clase
+2. **Recomendado**: 100-300 imágenes por clase
+3. **Variedad**: Diferentes ángulos, iluminación, fondos
+4. **Formato**: JPG, JPEG o PNG
+5. **Resolución**: Mínimo 640x640 píxeles
 
-Para señales de alto: `0 0.5 0.5 0.3 0.4`
+### Consejos para mejores resultados:
+- Incluye objetos en diferentes posiciones
+- Varía la iluminación (natural, artificial)
+- Diferentes fondos y contextos
+- Objetos parcialmente ocluidos
+- Diferentes escalas (cerca, lejos)
 
-## Recomendaciones:
-- Mínimo 50 imágenes de entrenamiento
-- Imágenes variadas: diferentes ángulos, iluminación, distancias
-- Etiquetas precisas y consistentes
-- Distribución: 70% train, 20% val, 10% test
+## 🏷️ Paso 2: Anotar Imágenes
+
+### Opción A: Usar LabelImg (Recomendado)
+1. Instalar: `pip install labelimg`
+2. Ejecutar: `labelimg`
+3. Abrir directorio de imágenes
+4. Cambiar formato a "YOLO"
+5. Crear cajas delimitadoras alrededor de objetos
+6. Guardar etiquetas (.txt)
+
+### Opción B: Usar Roboflow (Online)
+1. Ir a https://roboflow.com
+2. Crear proyecto gratuito
+3. Subir imágenes
+4. Anotar online
+5. Exportar en formato YOLO
+
+## 📊 Paso 3: Dividir Dataset
+- **Entrenamiento**: 80% de las imágenes
+- **Validación**: 20% de las imágenes
+- Distribuir equitativamente por clase
+
+## 🔧 Paso 4: Crear data.yaml
+Usar la función `create_dataset_yaml()` del script.
+
+## 🚀 Paso 5: Entrenar Modelo
+Ejecutar el script de entrenamiento.
+
+## 📈 Métricas a Observar
+- **mAP50**: Precisión promedio a IoU=0.5
+- **mAP50-95**: Precisión promedio IoU=0.5-0.95
+- **Precisión**: % de detecciones correctas
+- **Recall**: % de objetos reales detectados
+
+### Valores objetivo:
+- mAP50 > 0.7 (Bueno)
+- mAP50 > 0.8 (Excelente)
+- Precisión > 0.8
+- Recall > 0.7
 """
-    
-    with open(dataset_path / "README.md", "w", encoding="utf-8") as f:
-        f.write(readme_content)
-    
-    print(f"\n✅ Estructura del dataset creada en: {dataset_path}")
-    print("📖 Lee el archivo README.md para instrucciones detalladas")
+        
+        with open(guide_path, 'w', encoding='utf-8') as f:
+            f.write(guide_content)
+        
+        print(f"📋 Guía creada en: {guide_path}")
 
 def main():
-    """Función principal para entrenar el modelo"""
-    print("🎯 Entrenador de Modelo Personalizado - Señales de Alto Mexicanas")
-    print("="*70)
+    """
+    Función principal para entrenar modelo personalizado.
+    """
+    print("🎯 ENTRENADOR DE MODELO YOLO PERSONALIZADO")
+    print("="*50)
     
-    # Crear estructura del dataset si no existe
-    if not Path("dataset").exists():
-        print("📁 Creando estructura del dataset...")
-        create_dataset_structure()
-        print("\n⚠️  IMPORTANTE: Agrega tus imágenes y etiquetas antes de continuar.")
-        print("📖 Consulta el archivo dataset/README.md para más información.")
-        return
+    # Crear instancia del entrenador
+    trainer = CustomYOLOTrainer("mi_detector_personalizado")
     
-    # Inicializar entrenador
-    trainer = CustomModelTrainer()
+    # Generar guía
+    trainer.create_training_guide()
     
-    # Validar dataset
-    if not trainer.validate_dataset_structure():
-        print("❌ La estructura del dataset no es válida. Revisa los directorios.")
-        return
+    # Ejemplo de uso - PERSONALIZAR SEGÚN TU CASO
+    print("\n📋 CONFIGURACIÓN DE EJEMPLO:")
+    print("Para entrenar tu modelo, sigue estos pasos:")
+    print("1. Define las clases que quieres detectar")
+    print("2. Prepara tu dataset siguiendo la guía generada")
+    print("3. Ejecuta las funciones de entrenamiento")
     
-    # Entrenar modelo
-    try:
-        model_path = trainer.train_model()
-        print(f"\n🎉 ¡Entrenamiento completado exitosamente!")
-        print(f"📦 Modelo guardado en: {model_path}")
-        
-        # Probar modelo si hay imágenes de prueba
-        trainer.test_model(model_path)
-        
-    except Exception as e:
-        print(f"❌ Error durante el entrenamiento: {e}")
-        return
+    # Ejemplo para detectar útiles escolares
+    example_classes = ["lapiz", "cuaderno", "kit_escritura"]
+    example_descriptions = [
+        "Lápiz - instrumento de escritura",
+        "Cuaderno - libreta para escribir o dibujar", 
+        "Kit de escritura - lápiz y cuaderno juntos"
+    ]
     
-    print("\n🚀 El modelo está listo para usar en la aplicación principal!")
+    print(f"\n🎯 EJEMPLO: Detector de útiles escolares")
+    print(f"Clases: {example_classes}")
+    
+    # Crear archivo data.yaml de ejemplo
+    yaml_path = trainer.create_dataset_yaml(example_classes, example_descriptions)
+    
+    print(f"\n📋 PRÓXIMOS PASOS:")
+    print(f"1. Coloca tus imágenes anotadas en: dataset/images/train y dataset/images/val")
+    print(f"2. Coloca las etiquetas (.txt) en: dataset/labels/train y dataset/labels/val")
+    print(f"3. Ejecuta: trainer.train_model()")
+    print(f"4. Valida con: trainer.validate_trained_model()")
+    
+    # Preguntar si desea iniciar entrenamiento
+    response = input("\n¿Tienes tu dataset listo y quieres iniciar el entrenamiento? (s/n): ")
+    if response.lower() == 's':
+        print("🚀 Iniciando entrenamiento...")
+        results = trainer.train_model()
+        if results:
+            trainer.validate_trained_model()
+    else:
+        print("📋 Prepara tu dataset y vuelve a ejecutar este script.")
 
 if __name__ == "__main__":
     main()

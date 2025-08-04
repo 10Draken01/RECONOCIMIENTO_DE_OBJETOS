@@ -1,7 +1,0 @@
-names:
-- señal_alto
-nc: 1
-path: C:\Users\edgar\Desktop\aplicacionYolo\dataset
-test: images/test
-train: images/train
-val: images/val

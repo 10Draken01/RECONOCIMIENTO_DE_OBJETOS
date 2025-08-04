@@ -1,0 +1,14 @@
+# Dependencias principales para el proyecto YOLO + OpenCV
+ultralytics>=8.0.0       # YOLO v8 - Modelo preentrenado y entrenamiento personalizado
+opencv-python>=4.5.0     # OpenCV - Procesamiento de imágenes y video
+gradio>=3.0.0           # Gradio - Interfaz gráfica web
+numpy>=1.21.0           # NumPy - Operaciones numéricas
+pandas>=1.3.0           # Pandas - Manejo de datos y exportación CSV
+torch>=1.12.0           # PyTorch - Framework de deep learning
+torchvision>=0.13.0     # TorchVision - Utilidades para visión por computadora
+Pillow>=8.0.0           # PIL - Manejo de imágenes
+matplotlib>=3.5.0       # Matplotlib - Visualizaciones y gráficos
+seaborn>=0.11.0         # Seaborn - Gráficos estadísticos
+tqdm>=4.62.0            # TQDM - Barras de progreso
+pyyaml>=6.0             # PyYAML - Archivos de configuración
+requests>=2.25.0        # Requests - Descargas de modelos

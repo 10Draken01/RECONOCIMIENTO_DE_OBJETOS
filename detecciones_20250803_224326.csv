@@ -1,8 +1,0 @@
-RESUMEN DE CONTADORES
-persona,automovil,señal_alto
-2,0,0
-
-DETALLE DE DETECCIONES
-clase,confianza,bbox
-persona,0.8578082323074341,"[262, 236, 579, 720]"
-persona,0.8507874011993408,"[570, 180, 854, 721]"

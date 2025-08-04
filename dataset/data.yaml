@@ -1,0 +1,18 @@
+# Configuración del dataset - Útiles Escolares
+# Universidad Politécnica de Chiapas
+
+path: ./dataset
+train: images/train
+val: images/val
+
+nc: 3  # Número de clases
+
+names:
+  0: lapiz
+  1: cuaderno  
+  2: kit_escritura
+
+# Información del proyecto
+project_name: "Detector Útiles Escolares UPChiapas"
+authors: ["Estudiante 1", "Estudiante 2"]
+course: "Multimedia y Diseño Digital"
